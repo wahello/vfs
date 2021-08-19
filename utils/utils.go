@@ -21,8 +21,6 @@ const (
 	// ErrBadRelLocationPath constant is returned when a file path is not relative
 	ErrBadRelLocationPath = "relative location path is invalid - may not include leading slash but must include trailing slash"
 )
-//TODO Remove Testing
-var BufferSize = 512*1024
 
 // regex to test whether the last character is a '/'
 var hasTrailingSlash = regexp.MustCompile("/$")
@@ -101,18 +99,7 @@ func EnsureLeadingSlash(dir string) string {
 // TouchCopy is a wrapper around io.Copy which ensures that even empty source files (reader) will get written as an
 // empty file. It guarantees a Write() call on the target file.
 func TouchCopy(writer io.Writer, reader io.Reader) error {
-	//TODO Remove Testing
-	var buffer [] byte
-	var size int64
-	var err error
-	if BufferSize > 0{
-		buffer = make([]byte, BufferSize)
-		size, err = io.CopyBuffer(writer, reader, buffer)
-	}else if BufferSize == -2{
-		size, err = io.CopyBuffer(writer, reader, nil)
-	}else{
-		size, err = io.Copy(writer, reader)
-	}
+	size, err := io.Copy(writer, reader)
 	if err != nil {
 		return err
 	}
