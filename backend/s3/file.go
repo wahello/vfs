@@ -113,8 +113,10 @@ func (f *File) CopyToFile(file vfs.File) error {
 		}
 	}
 
-	// otherwise use TouchCopy (io.Copy)
-	if err := utils.TouchCopy(file, f); err != nil {
+	// otherwise use TouchCopyBuffered uses io.Copy or io.CopyBuffered depending on fileSystem Options
+	fileOptions := f.Location().FileSystem().(*FileSystem).options.(Options)
+	fmt.Printf("\tS3 TouchCopyBuferred Called!! - %v\n", fileOptions.FileBufferSize)
+	if err := utils.TouchCopyBuffered(file, f, fileOptions.FileBufferSize); err != nil {
 		return err
 	}
 	// Close target to flush and ensure that cursor isn't at the end of the file when the caller reopens for read

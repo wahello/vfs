@@ -125,6 +125,36 @@ func TouchCopy(writer io.Writer, reader io.Reader) error {
 	return nil
 }
 
+// TouchCopy is a wrapper around io.CopyBuffer which ensures that even empty source files (reader) will get written as an
+// bufferSize is in bytes
+// empty file. It guarantees a Write() call on the target file.
+func TouchCopyBuffered(writer io.Writer, reader io.Reader, bufferSize int) error {
+	var buffer []byte
+	var size int64
+	var err error
+
+	if bufferSize > 32768 {
+		fmt.Println("\t\tIO Buffer Being Used")
+		buffer = make([]byte, bufferSize)
+		size, err = io.CopyBuffer(writer, reader, buffer)
+	} else {
+		//Use Go's Default Buffer Mechanism of 32KB
+		fmt.Println("\t\tIO Copy Being Used")
+		size, err = io.Copy(writer, reader)
+	}
+
+	if err != nil {
+		return err
+	}
+	if size == 0 {
+		_, err = writer.Write([]byte{})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // UpdateLastModifiedByMoving is used by some backends' Touch() method when a file already exists.
 func UpdateLastModifiedByMoving(file vfs.File) error {
 	// setup a tempfile
