@@ -121,13 +121,12 @@ func TouchCopyBuffered(writer io.Writer, reader io.Reader, bufferSize int) error
 	var err error
 
 	if bufferSize > 32768 {
-		fmt.Println("\t\tIO Buffer Being Used")
 		buffer = make([]byte, bufferSize)
 		size, err = io.CopyBuffer(writer, reader, buffer)
 	} else {
-		//Use Go's Default Buffer Mechanism of 32KB
-		fmt.Println("\t\tIO Copy Being Used")
-		size, err = io.Copy(writer, reader)
+		//Use Go's Default Buffer  of 256KB (256 * 1024 Bytes)
+		buffer = make([]byte, 262144)
+		size, err = io.CopyBuffer(writer, reader, buffer)
 	}
 
 	if err != nil {
