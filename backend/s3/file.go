@@ -1,7 +1,6 @@
 package s3
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -22,11 +21,12 @@ import (
 
 // File implements vfs.File interface for S3 fs.
 type File struct {
-	fileSystem  *FileSystem
-	bucket      string
-	key         string
-	tempFile    *os.File
-	writeBuffer *bytes.Buffer
+	fileSystem       *FileSystem
+	bucket           string
+	key              string
+	tempFile         *os.File
+	uploadPipeWriter *io.PipeWriter
+	uploadErrCh      chan error
 }
 
 // Info Functions
@@ -172,7 +172,13 @@ func (f *File) CopyToLocation(location vfs.Location) (vfs.File, error) {
 // Delete clears any local temp file, or write buffer from read/writes to the file, then makes
 // a DeleteObject call to s3 for the file. Returns any error returned by the API.
 func (f *File) Delete() error {
-	f.writeBuffer = nil
+
+	if f.uploadPipeWriter != nil {
+		defer close(f.uploadErrCh)
+	}
+	f.uploadPipeWriter = nil
+	//TODO: add cancellation?
+
 	if err := f.Close(); err != nil {
 		return err
 	}
@@ -206,22 +212,21 @@ func (f *File) Close() error {
 		f.tempFile = nil
 	}
 
-	if f.writeBuffer != nil {
-		client, err := f.fileSystem.Client()
+	if f.uploadPipeWriter != nil {
+		defer close(f.uploadErrCh)
+		// Closing the writer pipe should end the goroutine so check for errors
+		err := f.uploadPipeWriter.Close()
 		if err != nil {
 			return err
 		}
 
-		uploader := s3manager.NewUploaderWithClient(client)
-		uploadInput := uploadInput(f)
-		uploadInput.Body = f.writeBuffer
+		//TODO: could this end up blocking somehow?
+		// select {
+		// case err = <-f.uploadErrCh:
+		//	return err
+		// }
 
-		_, err = uploader.Upload(uploadInput)
-		if err != nil {
-			return err
-		}
-
-		f.writeBuffer = nil
+		f.uploadPipeWriter = nil
 		return waitUntilFileExists(f, 5)
 	}
 	return nil
@@ -250,19 +255,27 @@ func (f *File) Seek(offset int64, whence int) (int64, error) {
 // PutObject to s3. The underlying implementation uses s3manager which will determine whether
 // it is appropriate to call PutObject, or initiate a multi-part upload.
 func (f *File) Write(data []byte) (res int, err error) {
-	if f.writeBuffer == nil {
-		// note, initializing with 'data' and returning len(data), nil
-		// causes issues with some Write usages, notably csv.Writer
-		// so we simply initialize with no bytes and call the buffer Write after
-		//
-		// f.writeBuffer = bytes.NewBuffer(data)
-		// return len(data), nil
-		//
-		// so now we do:
+	if f.uploadPipeWriter == nil {
+		client, err := f.fileSystem.Client()
+		if err != nil {
+			return 0, err
+		}
+		pr, pw := io.Pipe()
+		uploader := s3manager.NewUploaderWithClient(client)
+		uploadInput := uploadInput(f)
+		uploadInput.Body = pr
 
-		f.writeBuffer = bytes.NewBuffer([]byte{})
+		f.uploadPipeWriter = pw
+		f.uploadErrCh = make(chan error)
+		go func() {
+			defer func() { _ = pr.Close() }()
+			_, err = uploader.Upload(uploadInput)
+			if err != nil {
+				f.uploadErrCh <- err
+			}
+		}()
 	}
-	return f.writeBuffer.Write(data)
+	return f.uploadPipeWriter.Write(data)
 }
 
 // Touch creates a zero-length file on the vfs.File if no File exists.  Update File's last modified timestamp.

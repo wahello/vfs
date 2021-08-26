@@ -394,12 +394,10 @@ func (ts *fileTestSuite) TestTouch() {
 
 	// test non-existent length
 	s3Mock2 := &mocks.S3API{}
-	s3Mock2.On("HeadObject", mock.AnythingOfType("*s3.HeadObjectInput")).
-		Return(&s3.HeadObjectOutput{}, awserr.New(s3.ErrCodeNoSuchKey, "", nil)).Once()
-	s3Mock2.On("PutObjectRequest", mock.AnythingOfType("*s3.PutObjectInput")).
-		Return(&request.Request{HTTPRequest: &http.Request{Header: make(map[string][]string), URL: &url.URL{}}}, &s3.PutObjectOutput{})
+	s3Mock2.On("CopyObject", mock.AnythingOfType("*s3.CopyObjectInput")).Return(nil, nil)
 	s3Mock2.On("HeadObject", mock.AnythingOfType("*s3.HeadObjectInput")).
 		Return(&s3.HeadObjectOutput{}, nil)
+	s3Mock2.On("DeleteObject", mock.AnythingOfType("*s3.DeleteObjectInput")).Return(&s3.DeleteObjectOutput{}, nil)
 	file2 := &File{
 		fileSystem: &FileSystem{
 			client:  s3Mock2,
