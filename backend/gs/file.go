@@ -409,7 +409,7 @@ func (f *File) copyToLocalTempReader() (*os.File, error) {
 		return nil, err
 	}
 	if outputReader.Attrs.Size > 100 {
-		err := DownloadFile(f, tmpFile, 100)
+		err := DownloadFile(f, tmpFile, 4)
 		if err != nil {
 			return nil, err
 		}

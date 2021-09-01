@@ -23,11 +23,16 @@ func DownloadFile(gsFile *File, osFile *os.File, workerCount int64) error {
 		RemoteFile: gsFile,
 		Count:      workerCount,
 		TotalSize:  int64(size),
-		Readers:    make(chan partResponse, workerCount),
+		Chunk:      make(chan chunk),
 	}
 
 	var start, end int64
 	var partial_size = int64(size) / workerCount
+
+	// Start file writer
+	killSig := make(chan bool)
+	go worker.writeFile(killSig)
+
 	for num := int64(0); num < worker.Count; num++ {
 		if num == worker.Count {
 			end = int64(size)
@@ -45,64 +50,71 @@ func DownloadFile(gsFile *File, osFile *os.File, workerCount int64) error {
 	}
 
 	worker.SyncWG.Wait()
-	close(worker.Readers)
-
-	log.Printf("Done downloading file")
+	killSig <- true
+	close(worker.Chunk)
+	close(killSig)
 	return nil
 }
 
 type Worker struct {
-	File       *os.File
-	RemoteFile *File
-	Count      int64
-	SyncWG     sync.WaitGroup
-	TotalSize  int64
-	Readers    chan partResponse
+	File         *os.File
+	RemoteFile   *File
+	Count        int64
+	SyncWG       sync.WaitGroup
+	TotalSize    int64
+	WrittenCount int64
+	Chunk        chan chunk
+	Mut          sync.Mutex
 }
 
-type partResponse struct {
-	Body io.ReadCloser
-	Part int64
+type chunk struct {
+	Data  []byte
+	Part  int
+	Start int
 }
 
+func (w *Worker) writeFile(done chan bool) {
+	for {
+		select {
+		case part := <-w.Chunk:
+			written, err := w.File.WriteAt(part.Data, int64(part.Start))
+			if err != nil {
+				log.Fatalf("Failed to write chunk for part %d", part.Part)
+			}
+			w.Mut.Lock()
+			w.WrittenCount += int64(written)
+			w.Mut.Unlock()
+		case <-done:
+			log.Printf("Done writing file")
+			return
+		}
+	}
+}
 func (w *Worker) writeRange(part_num int64, start int64, end int64) {
 	//var written int64
 	body, err := w.getRangeBody(start, end)
 	if err != nil {
 		log.Fatalf("Part %d request error: %s\n", part_num, err.Error())
 	}
-	w.Readers <- partResponse{
-		Part: part_num,
-		Body: body,
+
+	buff := make([]byte, 1024)
+	chunkStart := int(start)
+	for {
+		numBytes, err := body.Read(buff)
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			// TODO: write to error channel
+			return
+		}
+		w.Chunk <- chunk{
+			Part:  int(part_num),
+			Data:  buff[0:numBytes],
+			Start: chunkStart,
+		}
 	}
+	log.Printf("Done writing part %d", part_num)
 	defer w.SyncWG.Done()
-	//
-	//// make a buffer to keep chunks that are read
-	//buf := make([]byte, 4*1024)
-	//for {
-	//	nr, er := body.Read(buf)
-	//	if nr > 0 {
-	//		nw, err := w.File.WriteAt(buf[0:nr], start)
-	//		if err != nil {
-	//			log.Fatalf("Part %d occured error: %s.\n", part_num, err.Error())
-	//		}
-	//		if nr != nw {
-	//			log.Fatalf("Part %d occured error of short writiing.\n", part_num)
-	//		}
-	//
-	//		start = int64(nw) + start
-	//		if nw > 0 {
-	//			written += int64(nw)
-	//		}
-	//	}
-	//	if er != nil {
-	//		if er.Error() == "EOF" {
-	//			log.Printf("Part %d done.\n", part_num)
-	//			break
-	//		}
-	//		handleError(errors.New(fmt.Sprintf("Part %d occured error: %s\n", part_num, er.Error())))
-	//	}
-	//}
 }
 
 func (w *Worker) getRangeBody(start int64, end int64) (io.ReadCloser, error) {
@@ -116,11 +128,4 @@ func (w *Worker) getRangeBody(start int64, end int64) (io.ReadCloser, error) {
 	}
 
 	return reader, err
-}
-
-func handleError(err error) {
-	if err != nil {
-		log.Println("err:", err)
-		os.Exit(1)
-	}
 }
