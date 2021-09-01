@@ -408,7 +408,12 @@ func (f *File) copyToLocalTempReader() (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-
+	if outputReader.Attrs.Size > 100 {
+		err := DownloadFile(f, tmpFile, 100)
+		if err != nil {
+			return nil, err
+		}
+	}
 	buffer := make([]byte, utils.TouchCopyMinBufferSize)
 	if _, err := io.CopyBuffer(tmpFile, outputReader, buffer); err != nil {
 		return nil, err
